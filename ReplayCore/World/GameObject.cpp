@@ -1,7 +1,7 @@
 #include "GameObject.h"
 #include "WorldServer.h"
 #include "ReplayMgr.h"
-#include "../Defines//ClientVersions.h"
+#include "../Defines/ClientVersions.h"
 
 GameObject::GameObject(GameObjectData const& gameObjectData) : WorldObject(gameObjectData.guid)
 {

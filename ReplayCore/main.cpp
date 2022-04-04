@@ -6,15 +6,15 @@
 #include <set>
 #include <sstream>
 
-#include "Database\Database.h"
-#include "Auth\AuthServer.h"
-#include "World\WorldServer.h"
-#include "World\ReplayMgr.h"
-#include "World\GameDataMgr.h"
-#include "Defines\Console.h"
-#include "World\Opcodes.h"
-#include "Input\CommandHandler.h"
-#include "Input\Config.h"
+#include "Database/Database.h"
+#include "Auth/AuthServer.h"
+#include "World/WorldServer.h"
+#include "World/ReplayMgr.h"
+#include "World/GameDataMgr.h"
+#include "Defines/Console.h"
+#include "World/Opcodes.h"
+#include "Input/CommandHandler.h"
+#include "Input/Config.h"
 
 Database WorldDatabase;
 Database SniffDatabase;
@@ -137,13 +137,16 @@ int main()
     UpdateFields::SetupUpdateFieldMaps();
 
     printf("\n[MAIN] Starting network...\n");
+    
+    #ifdef _WIN32
     WSAData data;
     int result = WSAStartup(0x0202, &data);
     if (result == SOCKET_ERROR)
     {
-        printf("WSAStartup error: %i\n", WSAGetLastError());
+        printf("WSAStartup error: %i\n", SOCKET_ERROR_CODE);
         return 1;
     }
+    #endif
 
     sAuth.StartNetwork();
     sWorld.StartNetwork();
@@ -177,7 +180,11 @@ int main()
 
     WorldDatabase.Uninitialise();
     SniffDatabase.Uninitialise();
+
+    #ifdef _WIN32
     WSACleanup();
+    #endif
+
     return 0;
 }
 
