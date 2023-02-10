@@ -721,6 +721,22 @@ bool CommandHandler::HandleSniffSetTime()
     return true;
 }
 
+bool CommandHandler::HandleSniffSkipTime()
+{
+    if (!sWorld.GetClientPlayer())
+    {
+        printf("Client is not in world!\n");
+        return true;
+    }
+
+    uint32 seconds;
+    if (!ExtractUInt32(seconds))
+        return false;
+
+    sReplayMgr.ChangeTime(sReplayMgr.GetCurrentSniffTime() + seconds);
+    return true;
+}
+
 bool CommandHandler::HandleSniffResetTime()
 {
     if (!sWorld.GetClientPlayer())
