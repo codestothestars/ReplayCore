@@ -1,6 +1,6 @@
-.settime 1570350729 - first attack by Blackhand Incarcerator
+.settime 1570350710 - Fifteen seconds before aggro.
 
-.settime 1570350770
+.settime 1570350770 - Pyroguard aggro.
 
 unit_flags
  33554752
