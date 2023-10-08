@@ -1,5 +1,6 @@
 /.vs/
 /.vscode/
+/ReplayCore/replayCore
 /ReplayCore/replaycore.ini
 Debug/
 *.vcxproj.user
