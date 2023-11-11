@@ -1,9 +1,2 @@
-.settime 1570350710 - Fifteen seconds before aggro.
-
-.settime 1570350770 - Pyroguard aggro.
-
-unit_flags
- 33554752
--33554432 (UNIT_FLAG_UNINTERACTIBLE) = 320
--     256 (UNIT_FLAG_IMMUNE_TO_PLAYER) = 64
--      64 (UNIT_FLAG_UNK_6) = 0
+.settime 1581618910 - Enter instance
+.settime 1581619600 - Start fight
