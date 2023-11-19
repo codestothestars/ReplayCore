@@ -1,15 +1,22 @@
 -- Initial delay for spell for creature.
-SELECT ROUND((spell_cast_start.unixtimems - creature_guid_values_update.unixtimems) / 1000)
-FROM spell_cast_start
-  JOIN creature ON spell_cast_start.caster_guid = creature.guid
-  JOIN creature_guid_values_update ON creature.guid = creature_guid_values_update.guid
+-- Includes time alive in case the creature died without casting, which may increase the max delay.
+SELECT
+  ROUND(
+    (CAST(spell_initial_cast.unixtimems AS SIGNED) - CAST(creature_combat_start.unixtimems AS SIGNED)) / 1000
+  ) spell_initial_cast_delay,
+  ROUND((creature_death.unixtimems - creature_combat_start.unixtimems) / 1000) creature_time_alive
+FROM creature
+  JOIN (
+    SELECT MIN(unixtimems) unixtimems, guid FROM creature_guid_values_update WHERE field_name = 'Target' GROUP BY guid
+  ) creature_combat_start ON creature.guid = creature_combat_start.guid
+  LEFT JOIN (
+    SELECT MIN(unixtimems) unixtimems, caster_guid, spell_id FROM spell_cast_start GROUP BY caster_guid, spell_id
+  ) spell_initial_cast ON creature.guid = spell_initial_cast.caster_guid AND spell_initial_cast.spell_id = 13747
+  LEFT JOIN (
+    SELECT MAX(unixtimems) unixtimems, guid FROM creature_values_update WHERE current_health = 0 GROUP BY guid
+  ) creature_death ON creature.guid = creature_death.guid
 WHERE
-  creature.id = 12557
-  AND creature_guid_values_update.unixtimems <= spell_cast_start.unixtimems
-  AND creature_guid_values_update.field_name = 'Target'
-  AND spell_cast_start.spell_id = 13747
-ORDER BY spell_cast_start.unixtimems, creature_guid_values_update.unixtimems
-LIMIT 1;
+  creature.id = 12557;
 
 -- Repeat delay for spell for creature.
 SELECT ROUND(AVG(current_cast.unixtimems - previous_cast.unixtimems) / 1000)
@@ -61,3 +68,5 @@ FROM creature_movement_server current
   JOIN creature ON current.guid = creature.guid
 WHERE creature.id = 12435 AND (current.unixtimems - previous.unixtimems) > 3000
 ORDER BY current.unixtimems, current.point;
+
+-- Time in combat for creature
