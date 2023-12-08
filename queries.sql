@@ -1,6 +1,7 @@
 -- Initial delay for spell for creature.
 -- Includes time alive as a minimum ceiling.
 SELECT
+  creature.guid,
   ROUND(
     (CAST(spell_initial_cast.unixtimems AS SIGNED) - CAST(creature_combat_start.unixtimems AS SIGNED)) / 1000
   ) spell_initial_cast_delay,
