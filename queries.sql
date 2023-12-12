@@ -5,7 +5,9 @@ SELECT
   ROUND(
     (CAST(spell_initial_cast.unixtimems AS SIGNED) - CAST(creature_combat_start.unixtimems AS SIGNED)) / 1000
   ) spell_initial_cast_delay,
-  ROUND((creature_death.unixtimems - creature_combat_start.unixtimems) / 1000) creature_time_alive
+  ROUND((creature_death.unixtimems - creature_combat_start.unixtimems) / 1000) creature_time_alive,
+  spell_initial_cast.unixtimems spell_initial_cast,
+  creature_combat_start.unixtimems creature_combat_start
 FROM creature
   JOIN (
     SELECT MIN(unixtimems) unixtimems, guid FROM creature_guid_values_update WHERE field_name = 'Target' GROUP BY guid
@@ -17,14 +19,17 @@ FROM creature
     SELECT MAX(unixtimems) unixtimems, guid FROM creature_values_update WHERE current_health = 0 GROUP BY guid
   ) creature_death ON creature.guid = creature_death.guid
 WHERE
-  creature.id = 12557;
+  creature.id = 12557
+ORDER BY creature.guid;
 
 -- Repeat delay for spell for creature.
 -- Includes time left alive as a minimum ceiling where the creature never repeated the spell.
 SELECT
   creature.guid,
   ROUND((current_cast.unixtimems - previous_cast.unixtimems) / 1000) spell_repeat_cast_delay,
-  ROUND((creature_death.unixtimems - current_cast.unixtimems) / 1000) creature_time_left_alive
+  ROUND((creature_death.unixtimems - current_cast.unixtimems) / 1000) creature_time_left_alive,
+  current_cast.unixtimems current_cast,
+  previous_cast.unixtimems previous_cast
 FROM creature
   JOIN spell_cast_start current_cast
     ON creature.guid = current_cast.caster_guid
