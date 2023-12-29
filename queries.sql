@@ -1,3 +1,16 @@
+-- Distinct creatures entering combat before boss death
+SELECT DISTINCT creature.id
+FROM creature_guid_values_update
+JOIN creature creature ON creature_guid_values_update.guid = creature.guid
+JOIN creature_values_update boss_death
+JOIN creature boss ON boss_death.guid = boss.guid
+WHERE boss.id = 12435
+  AND boss_death.current_health = 0
+  AND creature.`map` = 469
+  AND creature_guid_values_update.field_name = 'Target'
+  AND creature_guid_values_update.unixtimems < boss_death.unixtimems
+ORDER BY id
+
 -- Initial delay for spell for creature.
 -- Includes time alive as a minimum ceiling.
 SELECT
