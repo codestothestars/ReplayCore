@@ -1,9 +1,44 @@
 -- Closest enemy to creature on spell cast.
 WITH
+creature_point AS (
+  -- Start point (only point for non-spline)
+  SELECT
+    guid,
+    `point` parent_point,
+    0 spline_point,
+    start_position_x position_x,
+    start_position_y position_y,
+    start_position_z position_z
+  FROM creature_movement_server_combat
+  UNION ALL
+  -- End point of single-point spline
+  SELECT
+    guid,
+    `point` parent_point,
+    1 spline_point,
+    end_position_x position_x,
+    end_position_y position_y,
+    end_position_z position_z
+  FROM creature_movement_server_combat
+  WHERE spline_count = 1
+  UNION ALL
+  -- Multi-point spline point
+  SELECT
+    guid,
+    parent_point,
+    spline_point,
+    position_x,
+    position_y,
+    position_z
+  FROM creature_movement_server_combat_spline
+),
 pet AS (
   SELECT guid FROM creature WHERE is_pet = 1 AND faction IN (1, 2, 3, 4, 5, 6, 115, 116)
 ),
 player_movement AS (
+  -- Charmed creatures
+  SELECT unixtimems, guid, position_x, position_y, position_z FROM creature_movement_client
+  UNION ALL
   SELECT unixtimems, guid, position_x, position_y, position_z FROM player_movement_client
   UNION ALL
   SELECT
@@ -21,38 +56,8 @@ player_values AS (
   FROM creature_values_update JOIN pet ON creature_values_update.guid = pet.guid
 )
 SELECT spell_cast_start.unixtimems, caster.guid, MIN(SQRT(
-  POW(
-    COALESCE(
-      CASE caster_current_position.spline_count
-        WHEN 1 THEN
-          caster_current_position.start_position_x +
-          (caster_current_position.end_position_x - caster_current_position.start_position_x)
-          * (
-            LEAST(spell_cast_start.unixtimems - caster_current_position.unixtimems, caster_current_position.move_time)
-            / caster_current_position.move_time
-          )
-        ELSE caster_current_position.start_position_x 
-      END,
-      caster.position_x
-    ) - player_current_position.position_x,
-    2
-  )
-  + POW(
-    COALESCE(
-      CASE caster_current_position.spline_count
-        WHEN 1 THEN
-          caster_current_position.start_position_y +
-          (caster_current_position.end_position_y - caster_current_position.start_position_y)
-          * (
-            LEAST(spell_cast_start.unixtimems - caster_current_position.unixtimems, caster_current_position.move_time)
-            / caster_current_position.move_time
-          )
-        ELSE caster_current_position.start_position_y 
-      END,
-      caster.position_y
-    ) - player_current_position.position_y,
-    2
-  )
+  POW(COALESCE(caster_current_movement_point.position_x, caster.position_x) - player_current_position.position_x, 2)
+  + POW(COALESCE(caster_current_movement_point.position_y, caster.position_y) - player_current_position.position_y, 2)
 )) closest_player_distance
 FROM spell_cast_start
 JOIN creature caster ON spell_cast_start.caster_guid = caster.guid
@@ -69,14 +74,10 @@ JOIN (
 JOIN player_movement player_current_position
   ON spell_cast_player_last_movement.player_guid = player_current_position.guid
   AND spell_cast_player_last_movement.player_last_movement_unixtimems = player_current_position.unixtimems
-JOIN (
-  -- Idea for splines
-  -- Join to spline points,
-  -- calculate difference between (spell cast time / move_time) and (spline_point / spline_count)
-  -- then main query joins on this difference to decide on the closest point.
+LEFT JOIN (
   SELECT
     spell_cast_start.unixtimems spell_cast_start_unixtimems,
-    caster_movement.guid guid,
+    caster_movement.guid,
     MAX(caster_movement.unixtimems) caster_last_movement_unixtimems
   FROM spell_cast_start
   JOIN creature_movement_server_combat caster_movement ON spell_cast_start.caster_guid = caster_movement.guid
@@ -85,9 +86,38 @@ JOIN (
 ) caster_last_movement
   ON spell_cast_start.caster_guid = caster_last_movement.guid
   AND spell_cast_start.unixtimems = caster_last_movement.spell_cast_start_unixtimems
-JOIN creature_movement_server_combat caster_current_position
+LEFT JOIN creature_movement_server_combat caster_current_position
   ON spell_cast_start.caster_guid = caster_current_position.guid
   AND caster_last_movement.caster_last_movement_unixtimems = caster_current_position.unixtimems
+LEFT JOIN (
+  SELECT
+    spell_cast_start.unixtimems spell_cast_start_unixtimems,
+    caster_movement.guid,
+    caster_movement.unixtimems caster_movement_unixtimems,
+    caster_movement.`point`,
+    MIN(CASE caster_movement.spline_count WHEN 0 THEN 1 ELSE ABS(
+      (spell_cast_start.unixtimems - caster_movement.unixtimems) / caster_movement.move_time
+      - caster_movement_point.spline_point / caster_movement.spline_count
+    ) END) spline_progress
+  FROM spell_cast_start
+  JOIN creature_movement_server_combat caster_movement ON spell_cast_start.caster_guid = caster_movement.guid
+  JOIN creature_point caster_movement_point
+    ON spell_cast_start.caster_guid = caster_movement_point.guid
+    AND caster_movement.`point` = caster_movement_point.parent_point
+  WHERE caster_movement.unixtimems < spell_cast_start.unixtimems
+  GROUP BY spell_cast_start.unixtimems, caster_movement.guid, caster_movement.unixtimems, caster_movement.`point`
+) caster_last_movement_point
+  ON spell_cast_start.caster_guid = caster_last_movement_point.guid
+  AND spell_cast_start.unixtimems = caster_last_movement_point.spell_cast_start_unixtimems
+  AND caster_last_movement.caster_last_movement_unixtimems = caster_last_movement_point.caster_movement_unixtimems
+  AND caster_current_position.`point` = caster_last_movement_point.`point`
+LEFT JOIN creature_point caster_current_movement_point
+  ON spell_cast_start.caster_guid = caster_current_movement_point.guid
+  AND caster_current_position.`point` = caster_current_movement_point.parent_point
+  AND (caster_current_position.spline_count = 0 OR caster_last_movement_point.spline_progress = ABS(
+    (spell_cast_start.unixtimems - caster_last_movement.caster_last_movement_unixtimems) / caster_current_position.move_time
+    - caster_current_movement_point.spline_point / caster_current_position.spline_count
+  ))
 WHERE
   player_current_position.unixtimems > (spell_cast_start.unixtimems - 300000) -- 5 minutes
   AND player_current_position.unixtimems < spell_cast_start.unixtimems
@@ -107,7 +137,7 @@ WHERE boss.id = 12435
   AND creature.`map` = 469
   AND creature_guid_values_update.field_name = 'Target'
   AND creature_guid_values_update.unixtimems < boss_death.unixtimems
-ORDER BY id
+ORDER BY id;
 
 -- Initial delay for spell for creature.
 -- Includes time alive as a minimum ceiling.
