@@ -36,28 +36,140 @@ pet AS (
   SELECT guid FROM creature WHERE is_pet = 1 AND faction IN (1, 2, 3, 4, 5, 6, 115, 116)
 ),
 player_movement AS (
-  -- Charmed creatures
-  SELECT unixtimems, guid, position_x, position_y, position_z FROM creature_movement_client
+  -- Charmed creature
+  SELECT
+    unixtimems,
+    guid,
+    unixtimems `point`,
+    0 move_time,
+    0 spline_count,
+    position_x,
+    position_y,
+    position_z
+  FROM creature_movement_client
   UNION ALL
-  SELECT unixtimems, guid, position_x, position_y, position_z FROM player_movement_client
+  -- Player client
+  SELECT
+    unixtimems,
+    guid,
+    unixtimems `point`,
+    0 move_time,
+    0 spline_count,
+    position_x,
+    position_y,
+    position_z
+  FROM player_movement_client
   UNION ALL
+  -- Player server
+  SELECT
+    unixtimems,
+    guid,
+    `point`,
+    move_time,
+    spline_count,
+    start_position_x position_x,
+    start_position_y position_y,
+    start_position_z position_z
+  FROM player_movement_server
+  UNION ALL
+  -- Pet
   SELECT
     creature_movement_server_combat.unixtimems,
     creature_movement_server_combat.guid,
+    creature_movement_server_combat.`point`,
+    creature_movement_server_combat.move_time,
+    creature_movement_server_combat.spline_count,
     creature_movement_server_combat.start_position_x,
     creature_movement_server_combat.start_position_y,
     creature_movement_server_combat.start_position_z
   FROM creature_movement_server_combat JOIN pet ON creature_movement_server_combat.guid = pet.guid
 ),
-player_values AS (
-  SELECT unixtimems, guid, unit_flags FROM player_values_update
+player_point AS (
+  -- Charmed creature
+  SELECT
+    guid,
+    unixtimems parent_point,
+    0 spline_point,
+    position_x,
+    position_y,
+    position_z
+  FROM creature_movement_client
   UNION ALL
-  SELECT creature_values_update.unixtimems, creature_values_update.guid, creature_values_update.unit_flags
-  FROM creature_values_update JOIN pet ON creature_values_update.guid = pet.guid
+  -- Player client
+  SELECT
+    guid,
+    unixtimems parent_point,
+    0 spline_point,
+    position_x,
+    position_y,
+    position_z
+  FROM player_movement_client
+  UNION ALL
+  -- Player start point (only point for non-spline)
+  SELECT
+    guid,
+    `point` parent_point,
+    0 spline_point,
+    start_position_x position_x,
+    start_position_y position_y,
+    start_position_z position_z
+  FROM player_movement_server
+  UNION ALL
+  -- Player end point of single-point spline
+  SELECT
+    guid,
+    `point` parent_point,
+    1 spline_point,
+    end_position_x position_x,
+    end_position_y position_y,
+    end_position_z position_z
+  FROM player_movement_server
+  WHERE spline_count = 1
+  UNION ALL
+  -- Player multi-point spline point
+  SELECT
+    guid,
+    parent_point,
+    spline_point,
+    position_x,
+    position_y,
+    position_z
+  FROM player_movement_server_spline
+  UNION ALL
+  -- Pet start point (only point for non-spline)
+  SELECT
+    creature_movement_server.guid,
+    creature_movement_server.`point` parent_point,
+    0 spline_point,
+    creature_movement_server.start_position_x position_x,
+    creature_movement_server.start_position_y position_y,
+    creature_movement_server.start_position_z position_z
+  FROM creature_movement_server JOIN pet ON creature_movement_server.guid = pet.guid
+  UNION ALL
+  -- Pet end point of single-point spline
+  SELECT
+    creature_movement_server.guid,
+    creature_movement_server.`point` parent_point,
+    1 spline_point,
+    creature_movement_server.end_position_x position_x,
+    creature_movement_server.end_position_y position_y,
+    creature_movement_server.end_position_z position_z
+  FROM creature_movement_server JOIN pet ON creature_movement_server.guid = pet.guid
+  WHERE spline_count = 1
+  UNION ALL
+  -- Pet multi-point spline point
+  SELECT
+    creature_movement_server_spline.guid,
+    creature_movement_server_spline.parent_point,
+    creature_movement_server_spline.spline_point,
+    creature_movement_server_spline.position_x,
+    creature_movement_server_spline.position_y,
+    creature_movement_server_spline.position_z
+  FROM creature_movement_server_spline JOIN pet ON creature_movement_server_spline.guid = pet.guid
 )
 SELECT spell_cast_start.unixtimems, caster.guid, MIN(SQRT(
-  POW(COALESCE(caster_current_movement_point.position_x, caster.position_x) - player_current_position.position_x, 2)
-  + POW(COALESCE(caster_current_movement_point.position_y, caster.position_y) - player_current_position.position_y, 2)
+  POW(COALESCE(caster_current_movement_point.position_x, caster.position_x) - player_current_movement_point.position_x, 2)
+  + POW(COALESCE(caster_current_movement_point.position_y, caster.position_y) - player_current_movement_point.position_y, 2)
 )) closest_player_distance
 FROM spell_cast_start
 JOIN creature caster ON spell_cast_start.caster_guid = caster.guid
@@ -69,11 +181,40 @@ JOIN (
   FROM spell_cast_start JOIN player_movement
   WHERE player_movement.unixtimems < spell_cast_start.unixtimems
   GROUP BY spell_cast_start.unixtimems, player_movement.guid
-) spell_cast_player_last_movement
-  ON spell_cast_start.unixtimems = spell_cast_player_last_movement.spell_cast_start_unixtimems
+) player_last_movement
+  ON spell_cast_start.unixtimems = player_last_movement.spell_cast_start_unixtimems
 JOIN player_movement player_current_position
-  ON spell_cast_player_last_movement.player_guid = player_current_position.guid
-  AND spell_cast_player_last_movement.player_last_movement_unixtimems = player_current_position.unixtimems
+  ON player_last_movement.player_guid = player_current_position.guid
+  AND player_last_movement.player_last_movement_unixtimems = player_current_position.unixtimems
+JOIN (
+  SELECT
+    spell_cast_start.unixtimems spell_cast_start_unixtimems,
+    player_movement.guid,
+    player_movement.unixtimems player_movement_unixtimems,
+    player_movement.`point`,
+    MIN(CASE player_movement.spline_count WHEN 0 THEN 1 ELSE ABS(
+      (spell_cast_start.unixtimems - player_movement.unixtimems) / player_movement.move_time
+      - player_point.spline_point / player_movement.spline_count
+    ) END) spline_progress
+  FROM spell_cast_start
+  JOIN player_movement
+  JOIN player_point
+    ON player_movement.guid = player_point.guid
+    AND player_movement.`point` = player_point.parent_point
+  WHERE player_movement.unixtimems < spell_cast_start.unixtimems
+  GROUP BY spell_cast_start.unixtimems, player_movement.guid, player_movement.unixtimems, player_movement.`point`
+) player_last_movement_point
+  ON player_last_movement.player_guid = player_last_movement_point.guid
+  AND spell_cast_start.unixtimems = player_last_movement_point.spell_cast_start_unixtimems
+  AND player_last_movement.player_last_movement_unixtimems = player_last_movement_point.player_movement_unixtimems
+  AND player_current_position.`point` = player_last_movement_point.`point`
+JOIN player_point player_current_movement_point
+  ON player_last_movement.player_guid = player_current_movement_point.guid
+  AND player_current_position.`point` = player_current_movement_point.parent_point
+  AND (player_current_position.spline_count = 0 OR player_last_movement_point.spline_progress = ABS(
+    (spell_cast_start.unixtimems - player_last_movement.player_last_movement_unixtimems) / player_current_position.move_time
+    - player_current_movement_point.spline_point / player_current_position.spline_count
+  ))
 LEFT JOIN (
   SELECT
     spell_cast_start.unixtimems spell_cast_start_unixtimems,
@@ -119,7 +260,7 @@ LEFT JOIN creature_point caster_current_movement_point
     - caster_current_movement_point.spline_point / caster_current_position.spline_count
   ))
 WHERE
-  player_current_position.unixtimems > (spell_cast_start.unixtimems - 300000) -- 5 minutes
+  player_current_position.unixtimems > (spell_cast_start.unixtimems - 60000) -- 1 minute
   AND player_current_position.unixtimems < spell_cast_start.unixtimems
   AND spell_cast_start.caster_id = 12420
   AND spell_cast_start.spell_id = 22271
