@@ -1,48 +1,402 @@
 -- Closest enemy to creature on spell cast.
-WITH
-creature_point AS (
-  -- Start point (only point for non-spline)
+CREATE TABLE spell_cast_go_unixtimems(
+  unixtimems BIGINT(20) UNSIGNED NOT NULL PRIMARY KEY
+);
+CREATE TABLE unit_type(
+  unit_type_id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+  description VARCHAR(8) NOT NULL
+);
+CREATE TABLE encounter_spell_cast_go(
+  unixtimems BIGINT(20) UNSIGNED NOT NULL PRIMARY KEY REFERENCES spell_cast_go_unixtimems(unixtimems)
+);
+CREATE TABLE unit(
+  unit_type TINYINT UNSIGNED NOT NULL REFERENCES unit_type(unit_type_id),
+  guid INT(10) UNSIGNED NOT NULL,
+  faction INT(10) UNSIGNED NOT NULL,
+  PRIMARY KEY(unit_type, guid)
+);
+CREATE TABLE unit_alive_update(
+  unit_type TINYINT UNSIGNED NOT NULL REFERENCES unit_type(unit_type_id),
+  guid INT(10) UNSIGNED NOT NULL,
+  faction INT(10) UNSIGNED NOT NULL,
+  PRIMARY KEY(unit_type, guid)
+);
+CREATE TABLE unit_faction_update(
+  unit_type TINYINT UNSIGNED NOT NULL,
+  guid INT(10) UNSIGNED NOT NULL,
+  unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  faction INT(10) UNSIGNED NOT NULL,
+  PRIMARY KEY(unit_type, guid, unixtimems),
+  FOREIGN KEY(unit_type, guid) REFERENCES unit(unit_type, guid)
+);
+CREATE TABLE unit_movement(
+  unit_type TINYINT UNSIGNED NOT NULL,
+  guid INT(10) UNSIGNED NOT NULL,
+  unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  faction INT(10) UNSIGNED NOT NULL,
+  move_time INT(10) UNSIGNED NOT NULL,
+  movement_type TINYINT UNSIGNED NOT NULL,
+  spline_count SMALLINT(5) UNSIGNED NOT NULL,
+  position_x FLOAT NOT NULL,
+  position_y FLOAT NOT NULL,
+  position_z FLOAT NOT NULL,
+  PRIMARY KEY(unit_type, guid, unixtimems),
+  FOREIGN KEY(unit_type, guid) REFERENCES unit(unit_type, guid)
+);
+CREATE TABLE unit_point(
+  unit_type TINYINT UNSIGNED NOT NULL,
+  guid INT(10) UNSIGNED NOT NULL,
+  parent_unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  spline_point SMALLINT(5) UNSIGNED NOT NULL,
+  position_x FLOAT NOT NULL,
+  position_y FLOAT NOT NULL,
+  position_z FLOAT NOT NULL,
+  PRIMARY KEY(unit_type, guid, parent_unixtimems, unixtimems),
+  FOREIGN KEY(unit_type, guid, parent_unixtimems) REFERENCES unit_movement(unit_type, guid, unixtimems)
+);
+CREATE TABLE unit_health_update(
+  unit_type TINYINT UNSIGNED NOT NULL,
+  guid INT(10) UNSIGNED NOT NULL,
+  unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  current_health INT(10) UNSIGNED NOT NULL,
+  PRIMARY KEY (unit_type, guid, unixtimems),
+  FOREIGN KEY(unit_type, guid) REFERENCES unit(unit_type, guid)
+);
+CREATE TABLE spell_cast_go_unit_health_time(
+  spell_unixtimems BIGINT(20) UNSIGNED NOT NULL REFERENCES spell_cast_go_unixtimems(unixtimems),
+  unit_type TINYINT UNSIGNED NOT NULL,
+  guid INT(10) UNSIGNED NOT NULL,
+  update_unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  PRIMARY KEY(spell_unixtimems, unit_type, guid),
+  FOREIGN KEY(unit_type, guid, update_unixtimems) REFERENCES unit_health_update(unit_type, guid, unixtimems)
+);
+CREATE TABLE spell_cast_go_unit_previous_movement(
+  spell_unixtimems BIGINT(20) UNSIGNED NOT NULL REFERENCES spell_cast_go_unixtimems(unixtimems),
+  unit_type TINYINT UNSIGNED NOT NULL,
+  guid INT(10) UNSIGNED NOT NULL,
+  movement_unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  PRIMARY KEY(spell_unixtimems, unit_type, guid, movement_unixtimems),
+  FOREIGN KEY(unit_type, guid, movement_unixtimems) REFERENCES unit_movement(unit_type, guid, unixtimems)
+);
+CREATE TABLE spell_cast_go_unit_last_movement(
+  spell_unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  unit_type TINYINT UNSIGNED NOT NULL,
+  guid INT(10) UNSIGNED NOT NULL,
+  movement_unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  PRIMARY KEY(spell_unixtimems, unit_type, guid),
+  FOREIGN KEY(spell_unixtimems, unit_type, guid, movement_unixtimems)
+    REFERENCES spell_cast_go_unit_previous_movement(spell_unixtimems, unit_type, guid, movement_unixtimems)
+);
+CREATE TABLE spell_cast_go_unit_last_point(
+  spell_unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  unit_type TINYINT UNSIGNED NOT NULL,
+  guid INT(10) UNSIGNED NOT NULL,
+  parent_unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  point_unixtimems BIGINT(20) UNSIGNED NOT NULL,
+  PRIMARY KEY(spell_unixtimems, unit_type, guid, parent_unixtimems),
+  FOREIGN KEY(spell_unixtimems, unit_type, guid, parent_unixtimems)
+    REFERENCES spell_cast_go_unit_last_movement(spell_unixtimems, unit_type, guid, movement_unixtimems),
+  FOREIGN KEY(unit_type, guid, parent_unixtimems, point_unixtimems)
+    REFERENCES unit_point(unit_type, guid, parent_unixtimems, unixtimems)
+);
+SET @encounter_creature_id = 12435;
+SET @target_spell_id = 22271;
+INSERT spell_cast_go_unixtimems SELECT DISTINCT unixtimems FROM spell_cast_go;
+INSERT unit_type VALUES(1, 'Creature'), (2, 'Player');
+INSERT encounter_spell_cast_go
+SELECT DISTINCT spell_cast_go.unixtimems
+FROM spell_cast_go
+  JOIN creature
+  JOIN (
+    SELECT guid, MIN(unixtimems) unixtimems FROM creature_guid_values_update GROUP BY guid
+  ) creature_first_guid_value_update ON creature.guid = creature_first_guid_value_update.guid
+  JOIN (
+    SELECT guid, MAX(unixtimems) unixtimems FROM creature_values_update GROUP BY guid
+  ) creature_last_value_update ON creature.guid = creature_last_value_update.guid
+  WHERE
+    creature.id = @encounter_creature_id
+    AND spell_cast_go.spell_id = @target_spell_id
+    AND spell_cast_go.unixtimems
+      BETWEEN creature_first_guid_value_update.unixtimems AND creature_last_value_update.unixtimems;
+INSERT unit SELECT * FROM (
+  SELECT 1 unit_type, guid, faction FROM creature
+  UNION ALL
+  SELECT 2 unit_type, guid, faction FROM player
+) unit;
+INSERT unit_faction_update SELECT * FROM (
+  SELECT 1 unit_type, guid, unixtimems, faction FROM creature_values_update
+  UNION ALL
+  SELECT 2 unit_type, guid, unixtimems, faction FROM player_values_update
+) unit_faction_update WHERE faction IS NOT NULL;
+INSERT unit_health_update
+WITH unit_health_update AS (
+  -- Starting health
   SELECT
+    1 unit_type,
+    creature.guid,
+    creature_create1_time.unixtimems,
+    creature.current_health,
+    1 source
+  FROM creature JOIN creature_create1_time ON creature.guid = creature_create1_time.guid
+  UNION ALL
+  SELECT
+    1 unit_type,
     guid,
-    `point` parent_point,
+    unixtimems,
+    AVG(current_health) current_health, -- AVG in case of ambiguous simultaneous updates
+    2 source
+  FROM creature_values_update
+  GROUP BY unit_type, guid, unixtimems, source
+  UNION ALL
+  SELECT
+    2 unit_type,
+    guid,
+    unixtimems,
+    AVG(current_health) current_health,
+    2 source
+  FROM player_values_update
+  GROUP BY unit_type, guid, unixtimems, source
+)
+SELECT
+  unit_health_update.unit_type,
+  unit_health_update.guid,
+  unit_health_update.unixtimems,
+  unit_health_update.current_health
+FROM unit_health_update
+JOIN (
+  SELECT unit_type, guid, unixtimems, MAX(source) source
+  FROM unit_health_update
+  GROUP BY unit_type, guid, unixtimems
+) unit_health_update_best_source
+  ON unit_health_update.unit_type = unit_health_update_best_source.unit_type
+  AND unit_health_update.guid = unit_health_update_best_source.guid
+  AND unit_health_update.unixtimems = unit_health_update_best_source.unixtimems
+  AND unit_health_update.source = unit_health_update_best_source.source
+WHERE unit_health_update.current_health IS NOT NULL;
+INSERT unit_movement
+WITH unit_movement AS (
+  -- Charmed creature
+  SELECT
+    1 unit_type,
+    guid,
+    unixtimems,
+    0 move_time,
+    1 movement_type,
+    0 `point`,
+    0 spline_count,
+    AVG(position_x) position_x,
+    AVG(position_y) position_y,
+    AVG(position_z) position_z
+  FROM creature_movement_client
+  GROUP BY guid, unixtimems
+  UNION ALL
+  SELECT
+    1 unit_type,
+    guid,
+    unixtimems,
+    move_time,
+    2 movement_type,
+    `point`,
+    spline_count,
+    start_position_x,
+    start_position_y,
+    start_position_z
+  FROM creature_movement_server
+  UNION ALL
+  -- Creature in combat
+  SELECT
+    1 unit_type,
+    guid,
+    unixtimems,
+    move_time,
+    3 movement_type,
+    `point`,
+    spline_count,
+    start_position_x,
+    start_position_y,
+    start_position_z
+  FROM creature_movement_server_combat
+  UNION ALL
+  -- Player client
+  SELECT
+    2 unit_type,
+    guid,
+    unixtimems,
+    0 move_time,
+    1 movement_type,
+    0 `point`,
+    0 spline_count,
+    AVG(position_x) position_x,
+    AVG(position_y) position_y,
+    AVG(position_z) position_z
+  FROM player_movement_client
+  GROUP BY guid, unixtimems
+  UNION ALL
+  -- Player server
+  SELECT
+    2 unit_type,
+    guid,
+    unixtimems,
+    move_time,
+    2 movement_type,
+    `point`,
+    spline_count,
+    start_position_x position_x,
+    start_position_y position_y,
+    start_position_z position_z
+  FROM player_movement_server
+)
+SELECT
+  unit_movement.unit_type,
+  unit_movement.guid,
+  unit_movement.unixtimems,
+  COALESCE(unit_faction_update.faction, unit.faction) unit_movement_faction,
+  unit_movement.move_time,
+  unit_movement.movement_type,
+  unit_movement.spline_count,
+  unit_movement.position_x,
+  unit_movement.position_y,
+  unit_movement.position_z
+FROM unit_movement
+JOIN (
+  SELECT unit_type, guid, unixtimems, MAX(movement_type) movement_type
+  FROM unit_movement
+  GROUP BY unit_type, guid, unixtimems
+) unit_movement_type
+  ON unit_movement.unit_type = unit_movement_type.unit_type
+  AND unit_movement.guid = unit_movement_type.guid
+  AND unit_movement.unixtimems = unit_movement_type.unixtimems
+  AND unit_movement.movement_type = unit_movement_type.movement_type
+JOIN (
+  SELECT unit_type, guid, unixtimems, movement_type, MAX(`point`) `point`
+  FROM unit_movement
+  GROUP BY unit_type, guid, unixtimems, movement_type
+) unit_movement_point
+  ON unit_movement.unit_type = unit_movement_point.unit_type
+  AND unit_movement.guid = unit_movement_point.guid
+  AND unit_movement.unixtimems = unit_movement_point.unixtimems
+  AND unit_movement.movement_type = unit_movement_point.movement_type
+  AND unit_movement.`point` = unit_movement_point.`point`
+JOIN unit ON unit_movement.unit_type = unit.unit_type AND unit_movement.guid = unit.guid
+LEFT JOIN (
+  SELECT
+    unit_movement.unit_type,
+    unit_movement.guid,
+    unit_movement.movement_type,
+    unit_movement.unixtimems movement_unixtimems,
+    MAX(unit_faction_update.unixtimems) update_unixtimems
+  FROM unit_movement
+  JOIN unit_faction_update
+    ON unit_movement.unit_type = unit_faction_update.unit_type
+    AND unit_movement.guid = unit_faction_update.guid
+  WHERE unit_faction_update.unixtimems < unit_movement.unixtimems
+  GROUP BY unit_movement.unit_type, unit_movement.guid, unit_movement.movement_type, unit_movement.unixtimems
+) unit_movement_last_faction_update
+  ON unit_movement.unit_type = unit_movement_last_faction_update.unit_type
+  AND unit_movement.guid = unit_movement_last_faction_update.guid
+  AND unit_movement.movement_type = unit_movement_last_faction_update.movement_type
+  AND unit_movement.unixtimems = unit_movement_last_faction_update.movement_unixtimems
+LEFT JOIN unit_faction_update
+  ON unit_movement.unit_type = unit_faction_update.unit_type
+  AND unit_movement.guid = unit_faction_update.guid
+  AND unit_movement_last_faction_update.update_unixtimems = unit_faction_update.unixtimems;
+INSERT unit_point
+WITH unit_point AS (
+  -- Creature start point out of combat
+  SELECT
+    1 unit_type,
+    guid,
+    unixtimems parent_unixtimems,
     0 spline_point,
+    2 movement_type,
+    `point`,
+    start_position_x position_x,
+    start_position_y position_y,
+    start_position_z position_z
+  FROM creature_movement_server
+  UNION ALL
+  -- Creature start point in combat
+  SELECT
+    1 unit_type,
+    guid,
+    unixtimems parent_unixtimems,
+    0 spline_point,
+    3 movement_type,
+    `point`,
     start_position_x position_x,
     start_position_y position_y,
     start_position_z position_z
   FROM creature_movement_server_combat
   UNION ALL
-  -- End point of single-point spline
+  -- Creature single-point spline end point out of combat
   SELECT
+    1 unit_type,
     guid,
-    `point` parent_point,
+    unixtimems parent_unixtimems,
     1 spline_point,
+    2 movement_type,
+    `point`,
+    end_position_x position_x,
+    end_position_y position_y,
+    end_position_z position_z
+  FROM creature_movement_server
+  WHERE spline_count = 1
+  UNION ALL
+  -- Creature single-point spline end point in combat
+  SELECT
+    1 unit_type,
+    guid,
+    unixtimems parent_unixtimems,
+    1 spline_point,
+    3 movement_type,
+    `point`,
     end_position_x position_x,
     end_position_y position_y,
     end_position_z position_z
   FROM creature_movement_server_combat
   WHERE spline_count = 1
   UNION ALL
-  -- Multi-point spline point
+  -- Creature multi-point spline point out of combat
   SELECT
-    guid,
-    parent_point,
+    1 unit_type,
+    creature_movement_server.guid,
+    creature_movement_server.unixtimems parent_unixtimems,
     spline_point,
+    2 movement_type,
+    `point`,
+    position_x,
+    position_y,
+    position_z
+  FROM creature_movement_server_spline
+  JOIN creature_movement_server
+    ON creature_movement_server_spline.guid = creature_movement_server.guid
+    AND creature_movement_server_spline.parent_point = creature_movement_server.`point`
+  UNION ALL
+  -- Creature multi-point spline point in combat
+  SELECT
+    1 unit_type,
+    creature_movement_server_combat.guid,
+    creature_movement_server_combat.unixtimems parent_unixtimems,
+    spline_point,
+    3 movement_type,
+    `point`,
     position_x,
     position_y,
     position_z
   FROM creature_movement_server_combat_spline
-),
-pet AS (
-  SELECT guid FROM creature WHERE is_pet = 1 AND faction IN (1, 2, 3, 4, 5, 6, 115, 116)
-),
-player_movement AS (
+  JOIN creature_movement_server_combat
+    ON creature_movement_server_combat_spline.guid = creature_movement_server_combat.guid
+    AND creature_movement_server_combat_spline.parent_point = creature_movement_server_combat.`point`
+  UNION ALL
   -- Charmed creature
   SELECT
-    unixtimems,
+    1 unit_type,
     guid,
-    unixtimems `point`,
-    0 move_time,
-    0 spline_count,
+    unixtimems parent_unixtimems,
+    0 spline_point,
+    1 movement_type,
+    0 `point`,
     position_x,
     position_y,
     position_z
@@ -50,56 +404,12 @@ player_movement AS (
   UNION ALL
   -- Player client
   SELECT
-    unixtimems,
+    2 unit_type,
     guid,
-    unixtimems `point`,
-    0 move_time,
-    0 spline_count,
-    position_x,
-    position_y,
-    position_z
-  FROM player_movement_client
-  UNION ALL
-  -- Player server
-  SELECT
-    unixtimems,
-    guid,
-    `point`,
-    move_time,
-    spline_count,
-    start_position_x position_x,
-    start_position_y position_y,
-    start_position_z position_z
-  FROM player_movement_server
-  UNION ALL
-  -- Pet
-  SELECT
-    creature_movement_server_combat.unixtimems,
-    creature_movement_server_combat.guid,
-    creature_movement_server_combat.`point`,
-    creature_movement_server_combat.move_time,
-    creature_movement_server_combat.spline_count,
-    creature_movement_server_combat.start_position_x,
-    creature_movement_server_combat.start_position_y,
-    creature_movement_server_combat.start_position_z
-  FROM creature_movement_server_combat JOIN pet ON creature_movement_server_combat.guid = pet.guid
-),
-player_point AS (
-  -- Charmed creature
-  SELECT
-    guid,
-    unixtimems parent_point,
+    unixtimems parent_unixtimems,
     0 spline_point,
-    position_x,
-    position_y,
-    position_z
-  FROM creature_movement_client
-  UNION ALL
-  -- Player client
-  SELECT
-    guid,
-    unixtimems parent_point,
-    0 spline_point,
+    1 movement_type,
+    0 `point`,
     position_x,
     position_y,
     position_z
@@ -107,9 +417,12 @@ player_point AS (
   UNION ALL
   -- Player start point (only point for non-spline)
   SELECT
+    2 unit_type,
     guid,
-    `point` parent_point,
+    unixtimems parent_unixtimems,
     0 spline_point,
+    2 movement_type,
+    `point`,
     start_position_x position_x,
     start_position_y position_y,
     start_position_z position_z
@@ -117,9 +430,12 @@ player_point AS (
   UNION ALL
   -- Player end point of single-point spline
   SELECT
+    2 unit_type,
     guid,
-    `point` parent_point,
+    unixtimems parent_unixtimems,
     1 spline_point,
+    2 movement_type,
+    `point`,
     end_position_x position_x,
     end_position_y position_y,
     end_position_z position_z
@@ -128,143 +444,215 @@ player_point AS (
   UNION ALL
   -- Player multi-point spline point
   SELECT
-    guid,
-    parent_point,
+    2 unit_type,
+    player_movement_server.guid,
+    player_movement_server.unixtimems parent_unixtimems,
     spline_point,
+    2 movement_type,
+    `point`,
     position_x,
     position_y,
     position_z
   FROM player_movement_server_spline
-  UNION ALL
-  -- Pet start point (only point for non-spline)
-  SELECT
-    creature_movement_server.guid,
-    creature_movement_server.`point` parent_point,
-    0 spline_point,
-    creature_movement_server.start_position_x position_x,
-    creature_movement_server.start_position_y position_y,
-    creature_movement_server.start_position_z position_z
-  FROM creature_movement_server JOIN pet ON creature_movement_server.guid = pet.guid
-  UNION ALL
-  -- Pet end point of single-point spline
-  SELECT
-    creature_movement_server.guid,
-    creature_movement_server.`point` parent_point,
-    1 spline_point,
-    creature_movement_server.end_position_x position_x,
-    creature_movement_server.end_position_y position_y,
-    creature_movement_server.end_position_z position_z
-  FROM creature_movement_server JOIN pet ON creature_movement_server.guid = pet.guid
-  WHERE spline_count = 1
-  UNION ALL
-  -- Pet multi-point spline point
-  SELECT
-    creature_movement_server_spline.guid,
-    creature_movement_server_spline.parent_point,
-    creature_movement_server_spline.spline_point,
-    creature_movement_server_spline.position_x,
-    creature_movement_server_spline.position_y,
-    creature_movement_server_spline.position_z
-  FROM creature_movement_server_spline JOIN pet ON creature_movement_server_spline.guid = pet.guid
+  JOIN player_movement_server
+    ON player_movement_server_spline.guid = player_movement_server.guid
+    AND player_movement_server_spline.parent_point = player_movement_server.`point`
 )
-SELECT spell_cast_start.unixtimems, caster.guid, MIN(SQRT(
-  POW(COALESCE(caster_current_movement_point.position_x, caster.position_x) - player_current_movement_point.position_x, 2)
-  + POW(COALESCE(caster_current_movement_point.position_y, caster.position_y) - player_current_movement_point.position_y, 2)
-)) closest_player_distance
-FROM spell_cast_start
-JOIN creature caster ON spell_cast_start.caster_guid = caster.guid
+SELECT
+  unit_movement.unit_type,
+  unit_movement.guid,
+  unit_movement.unixtimems parent_unixtimems,
+  unit_movement.unixtimems + CASE unit_movement.spline_count
+    WHEN 0 THEN 0
+    ELSE unit_movement.move_time * (unit_point.spline_point / unit_movement.spline_count)
+  END unixtimems,
+  unit_point.spline_point,
+  unit_point.position_x,
+  unit_point.position_y,
+  unit_point.position_z
+FROM unit_movement
+JOIN unit_point
+  ON unit_movement.unit_type = unit_point.unit_type
+  AND unit_movement.guid = unit_point.guid
+  AND unit_movement.movement_type = unit_point.movement_type
+  AND unit_movement.unixtimems = unit_point.parent_unixtimems
 JOIN (
-  SELECT
-    spell_cast_start.unixtimems spell_cast_start_unixtimems,
-    player_movement.guid player_guid,
-    MAX(player_movement.unixtimems) player_last_movement_unixtimems
-  FROM spell_cast_start JOIN player_movement
-  WHERE player_movement.unixtimems < spell_cast_start.unixtimems
-  GROUP BY spell_cast_start.unixtimems, player_movement.guid
-) player_last_movement
-  ON spell_cast_start.unixtimems = player_last_movement.spell_cast_start_unixtimems
-JOIN player_movement player_current_position
-  ON player_last_movement.player_guid = player_current_position.guid
-  AND player_last_movement.player_last_movement_unixtimems = player_current_position.unixtimems
-JOIN (
-  SELECT
-    spell_cast_start.unixtimems spell_cast_start_unixtimems,
-    player_movement.guid,
-    player_movement.unixtimems player_movement_unixtimems,
-    player_movement.`point`,
-    MIN(CASE player_movement.spline_count WHEN 0 THEN 1 ELSE ABS(
-      (spell_cast_start.unixtimems - player_movement.unixtimems) / player_movement.move_time
-      - player_point.spline_point / player_movement.spline_count
-    ) END) spline_progress
-  FROM spell_cast_start
-  JOIN player_movement
-  JOIN player_point
-    ON player_movement.guid = player_point.guid
-    AND player_movement.`point` = player_point.parent_point
-  WHERE player_movement.unixtimems < spell_cast_start.unixtimems
-  GROUP BY spell_cast_start.unixtimems, player_movement.guid, player_movement.unixtimems, player_movement.`point`
-) player_last_movement_point
-  ON player_last_movement.player_guid = player_last_movement_point.guid
-  AND spell_cast_start.unixtimems = player_last_movement_point.spell_cast_start_unixtimems
-  AND player_last_movement.player_last_movement_unixtimems = player_last_movement_point.player_movement_unixtimems
-  AND player_current_position.`point` = player_last_movement_point.`point`
-JOIN player_point player_current_movement_point
-  ON player_last_movement.player_guid = player_current_movement_point.guid
-  AND player_current_position.`point` = player_current_movement_point.parent_point
-  AND (player_current_position.spline_count = 0 OR player_last_movement_point.spline_progress = ABS(
-    (spell_cast_start.unixtimems - player_last_movement.player_last_movement_unixtimems) / player_current_position.move_time
-    - player_current_movement_point.spline_point / player_current_position.spline_count
-  ))
-LEFT JOIN (
-  SELECT
-    spell_cast_start.unixtimems spell_cast_start_unixtimems,
-    caster_movement.guid,
-    MAX(caster_movement.unixtimems) caster_last_movement_unixtimems
-  FROM spell_cast_start
-  JOIN creature_movement_server_combat caster_movement ON spell_cast_start.caster_guid = caster_movement.guid
-  WHERE caster_movement.unixtimems < spell_cast_start.unixtimems
-  GROUP BY spell_cast_start.unixtimems, caster_movement.guid
-) caster_last_movement
-  ON spell_cast_start.caster_guid = caster_last_movement.guid
-  AND spell_cast_start.unixtimems = caster_last_movement.spell_cast_start_unixtimems
-LEFT JOIN creature_movement_server_combat caster_current_position
-  ON spell_cast_start.caster_guid = caster_current_position.guid
-  AND caster_last_movement.caster_last_movement_unixtimems = caster_current_position.unixtimems
-LEFT JOIN (
-  SELECT
-    spell_cast_start.unixtimems spell_cast_start_unixtimems,
-    caster_movement.guid,
-    caster_movement.unixtimems caster_movement_unixtimems,
-    caster_movement.`point`,
-    MIN(CASE caster_movement.spline_count WHEN 0 THEN 1 ELSE ABS(
-      (spell_cast_start.unixtimems - caster_movement.unixtimems) / caster_movement.move_time
-      - caster_movement_point.spline_point / caster_movement.spline_count
-    ) END) spline_progress
-  FROM spell_cast_start
-  JOIN creature_movement_server_combat caster_movement ON spell_cast_start.caster_guid = caster_movement.guid
-  JOIN creature_point caster_movement_point
-    ON spell_cast_start.caster_guid = caster_movement_point.guid
-    AND caster_movement.`point` = caster_movement_point.parent_point
-  WHERE caster_movement.unixtimems < spell_cast_start.unixtimems
-  GROUP BY spell_cast_start.unixtimems, caster_movement.guid, caster_movement.unixtimems, caster_movement.`point`
-) caster_last_movement_point
-  ON spell_cast_start.caster_guid = caster_last_movement_point.guid
-  AND spell_cast_start.unixtimems = caster_last_movement_point.spell_cast_start_unixtimems
-  AND caster_last_movement.caster_last_movement_unixtimems = caster_last_movement_point.caster_movement_unixtimems
-  AND caster_current_position.`point` = caster_last_movement_point.`point`
-LEFT JOIN creature_point caster_current_movement_point
-  ON spell_cast_start.caster_guid = caster_current_movement_point.guid
-  AND caster_current_position.`point` = caster_current_movement_point.parent_point
-  AND (caster_current_position.spline_count = 0 OR caster_last_movement_point.spline_progress = ABS(
-    (spell_cast_start.unixtimems - caster_last_movement.caster_last_movement_unixtimems) / caster_current_position.move_time
-    - caster_current_movement_point.spline_point / caster_current_position.spline_count
-  ))
+  SELECT unit_type, guid, parent_unixtimems, movement_type, MAX(`point`) `point`
+  FROM unit_point
+  GROUP BY unit_type, guid, parent_unixtimems, movement_type
+) unit_point_point
+  ON unit_point.unit_type = unit_point_point.unit_type
+  AND unit_point.guid = unit_point_point.guid
+  AND unit_point.parent_unixtimems = unit_point_point.parent_unixtimems
+  AND unit_point.movement_type = unit_point_point.movement_type
+  AND unit_point.`point` = unit_point_point.`point`
+GROUP BY unit_movement.unit_type, unit_movement.guid, unit_movement.unixtimems, unit_point.spline_point;
+ALTER TABLE spell_cast_go ADD CONSTRAINT fk_spell_cast_go_unixtimems FOREIGN KEY(unixtimems) REFERENCES spell_cast_go_unixtimems(unixtimems);
+INSERT spell_cast_go_unit_health_time
+SELECT
+  encounter_spell_cast_go.unixtimems spell_unixtimems,
+  unit_health_update.unit_type,
+  unit_health_update.guid,
+  MAX(unit_health_update.unixtimems) update_unixtimems
+FROM encounter_spell_cast_go
+JOIN unit_health_update
+WHERE unit_health_update.unixtimems < encounter_spell_cast_go.unixtimems
+GROUP BY
+  encounter_spell_cast_go.unixtimems,
+  unit_health_update.unit_type,
+  unit_health_update.guid;
+INSERT spell_cast_go_unit_previous_movement
+SELECT
+  encounter_spell_cast_go.unixtimems,
+  unit_movement.unit_type,
+  unit_movement.guid,
+  unit_movement.unixtimems
+FROM encounter_spell_cast_go
+JOIN unit_movement
 WHERE
-  player_current_position.unixtimems > (spell_cast_start.unixtimems - 60000) -- 1 minute
-  AND player_current_position.unixtimems < spell_cast_start.unixtimems
-  AND spell_cast_start.caster_id = 12420
-  AND spell_cast_start.spell_id = 22271
-GROUP BY spell_cast_start.unixtimems, caster.guid
+  unit_movement.unixtimems BETWEEN (encounter_spell_cast_go.unixtimems - 90000) AND encounter_spell_cast_go.unixtimems;
+INSERT spell_cast_go_unit_last_movement
+SELECT
+  spell_unixtimems,
+  unit_type,
+  guid,
+  MAX(movement_unixtimems) movement_unixtimems
+FROM spell_cast_go_unit_previous_movement
+GROUP BY spell_unixtimems, unit_type, guid;
+INSERT spell_cast_go_unit_last_point
+SELECT
+  spell_cast_go_unit_last_movement.spell_unixtimems,
+  spell_cast_go_unit_last_movement.unit_type,
+  spell_cast_go_unit_last_movement.guid,
+  spell_cast_go_unit_last_movement.movement_unixtimems,
+  MAX(unit_point.unixtimems) point_unixtimems
+FROM spell_cast_go_unit_last_movement
+JOIN unit_point
+  ON spell_cast_go_unit_last_movement.unit_type = unit_point.unit_type
+  AND spell_cast_go_unit_last_movement.guid = unit_point.guid
+  AND spell_cast_go_unit_last_movement.movement_unixtimems = unit_point.parent_unixtimems
+WHERE unit_point.unixtimems <= spell_cast_go_unit_last_movement.spell_unixtimems
+GROUP BY
+  spell_cast_go_unit_last_movement.spell_unixtimems,
+  spell_cast_go_unit_last_movement.unit_type,
+  spell_cast_go_unit_last_movement.guid,
+  spell_cast_go_unit_last_movement.movement_unixtimems;
+SELECT
+  spell_cast_go.unixtimems,
+  caster.guid,
+  MIN(SQRT(
+    POW(
+      spell_cast_go_position.position_x - (
+        unit_last_point.position_x
+        + CASE WHEN unit_next_point.unixtimems IS NULL THEN 0 ELSE
+          (unit_next_point.position_x - unit_last_point.position_x)
+          * (
+            (spell_cast_go.unixtimems - unit_last_point.unixtimems)
+            / (unit_next_point.unixtimems - unit_last_point.unixtimems)
+          )
+        END
+      ),
+      2
+    )
+    + POW(
+      spell_cast_go_position.position_y - (
+        unit_last_point.position_y
+        + CASE WHEN unit_next_point.unixtimems IS NULL THEN 0 ELSE
+          (unit_next_point.position_y - unit_last_point.position_y)
+          * (
+            (spell_cast_go.unixtimems - unit_last_point.unixtimems)
+            / (unit_next_point.unixtimems - unit_last_point.unixtimems)
+          )
+        END
+      ),
+      2
+    )
+    + POW(
+      spell_cast_go_position.position_z - (
+        unit_last_point.position_z
+        + CASE WHEN unit_next_point.unixtimems IS NULL THEN 0 ELSE
+          (unit_next_point.position_z - unit_last_point.position_z)
+          * (
+            (spell_cast_go.unixtimems - unit_last_point.unixtimems)
+            / (unit_next_point.unixtimems - unit_last_point.unixtimems)
+          )
+        END
+      ),
+      2
+    )
+  )) closest_unit_distance
+FROM creature caster
+JOIN spell_cast_go ON caster.guid = spell_cast_go.caster_unit_guid
+JOIN spell_cast_go_position ON spell_cast_go.src_position_id = spell_cast_go_position.id
+JOIN spell_cast_go_unit_last_movement unit_last_movement_time
+  ON spell_cast_go.unixtimems = unit_last_movement_time.spell_unixtimems
+JOIN unit_movement unit_last_movement
+  ON unit_last_movement_time.unit_type = unit_last_movement.unit_type
+  AND unit_last_movement_time.guid = unit_last_movement.guid
+  AND unit_last_movement_time.movement_unixtimems = unit_last_movement.unixtimems
+JOIN spell_cast_go_unit_health_time unit_health_time
+  ON spell_cast_go.unixtimems = unit_health_time.spell_unixtimems
+  AND unit_last_movement_time.unit_type = unit_health_time.unit_type
+  AND unit_last_movement_time.guid = unit_health_time.guid
+JOIN unit_health_update unit_health
+  ON unit_last_movement_time.unit_type = unit_health.unit_type
+  AND unit_last_movement_time.guid = unit_health.guid
+  AND unit_health_time.update_unixtimems = unit_health.unixtimems
+JOIN spell_cast_go_unit_last_point unit_last_point_time
+  ON spell_cast_go.unixtimems = unit_last_point_time.spell_unixtimems
+  AND unit_last_movement_time.unit_type = unit_last_point_time.unit_type
+  AND unit_last_movement_time.guid = unit_last_point_time.guid
+  AND unit_last_movement_time.movement_unixtimems = unit_last_point_time.parent_unixtimems
+JOIN unit_point unit_last_point
+  ON unit_last_movement_time.unit_type = unit_last_point.unit_type
+  AND unit_last_movement_time.guid = unit_last_point.guid
+  AND unit_last_movement_time.movement_unixtimems = unit_last_point.parent_unixtimems
+  AND unit_last_point_time.point_unixtimems = unit_last_point.unixtimems
+LEFT JOIN unit_point unit_next_point
+  ON unit_last_movement_time.unit_type = unit_next_point.unit_type
+  AND unit_last_movement_time.guid = unit_next_point.guid
+  AND unit_last_movement_time.movement_unixtimems = unit_next_point.parent_unixtimems
+  AND (unit_last_point.spline_point + 1) = unit_next_point.spline_point
+LEFT JOIN (
+  SELECT
+    spell_cast_go.caster_id,
+    spell_cast_go.caster_unit_guid,
+    spell_cast_go.unixtimems spell_unixtimems,
+    MAX(unit_faction_update.unixtimems) faction_update_unixtimems
+  FROM spell_cast_go
+  JOIN unit_faction_update ON spell_cast_go.caster_unit_guid = unit_faction_update.guid
+  WHERE
+    spell_cast_go.caster_id IS NOT NULL
+    AND unit_faction_update.unit_type = 1
+    AND unit_faction_update.unixtimems < spell_cast_go.unixtimems
+  GROUP BY spell_cast_go.caster_id, spell_cast_go.caster_unit_guid, spell_cast_go.unixtimems
+) caster_faction_update_time
+  ON caster.id = caster_faction_update_time.caster_id
+  AND caster.guid = caster_faction_update_time.caster_unit_guid
+  AND spell_cast_go.unixtimems = caster_faction_update_time.spell_unixtimems
+LEFT JOIN unit_faction_update caster_faction_update
+  ON caster.guid = caster_faction_update.guid
+  AND caster_faction_update_time.faction_update_unixtimems = caster_faction_update.unixtimems
+  AND caster_faction_update.unit_type = 1
+JOIN faction_template caster_faction
+  ON COALESCE(caster_faction_update.faction, caster.faction) = caster_faction.id
+JOIN faction_template unit_faction
+  ON unit_last_movement.faction = unit_faction.id
+WHERE
+  caster_faction.hostile_mask & 0x1 -- caster was hostile to players on cast
+  AND spell_cast_go.caster_id = 12420
+  AND spell_cast_go.spell_id = 22271
+  AND (
+    unit_faction.faction_id IN (
+      caster_faction.enemy_faction1,
+      caster_faction.enemy_faction2,
+      caster_faction.enemy_faction3,
+      caster_faction.enemy_faction4
+    )
+    OR unit_faction.our_mask & caster_faction.hostile_mask
+  )
+  AND unit_health.current_health > 1
+GROUP BY spell_cast_go.unixtimems, caster.guid
 ORDER BY unixtimems, guid;
 
 -- Distinct creatures entering combat before boss death
